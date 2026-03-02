@@ -1,0 +1,78 @@
+/* Identity Login Composite - Mise en page */
+
+.identity-login-composite {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem; /* espace entre les groupes (name, contact, address) */
+}
+
+/* Assure que label est au-dessus du champ */
+.identity-login-composite .form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem; /* espace entre label et input */
+  margin-top: 0px;
+  margin-bottom: 0px;
+}
+
+.identity-login-composite .form-item label {
+  font-weight: 400;
+  margin-bottom: 0;
+}
+
+.identity-login-composite .form-item input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Lignes génériques */
+.identity-login-composite .row {
+  display: grid;
+  gap: 0.25rem; /* espace entre les champs d'une même ligne */
+}
+
+/* Nom / Prénom : 50/50 */
+.identity-login-composite .row.name-fields {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* Téléphone (1/3) / Email (2/3) */
+.identity-login-composite .row.contact-fields {
+  grid-template-columns: 1fr 2fr;
+}
+
+/* Adresse */
+.identity-login-composite .row.address-fields {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+  margin-top: 1rem;
+}
+
+.identity-login-composite .row.address-fields .address.street,
+.identity-login-composite .row.address-fields .address.street2 {
+  grid-column: 1 / -1;
+}
+
+.identity-login-composite .row.address-fields .address.postal-code {
+  grid-column: span 1;
+}
+
+.identity-login-composite .row.address-fields .address.city {
+  grid-column: span 2;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .identity-login-composite .row.name-fields,
+  .identity-login-composite .row.contact-fields,
+  .identity-login-composite .row.address-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-login-composite .row.address-fields .address.street,
+  .identity-login-composite .row.address-fields .address.street2,
+  .identity-login-composite .row.address-fields .address.postal-code,
+  .identity-login-composite .row.address-fields .address.city {
+    grid-column: 1 / -1;
+  }
+}

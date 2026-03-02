@@ -1,0 +1,142 @@
+<?php
+
+use Drupal\webform_identity_login\Utils\HmacUtils;
+use Drupal\Core\Form\FormStateInterface;
+
+/**
+ * @file
+ * Webform Identity Login module.
+ */
+
+/**
+ * Implements hook_theme().
+ */
+function webform_identity_login_theme($existing, $type, $theme, $path) {
+  return [
+    'identity_login_composite' => [
+      'render element' => 'element',
+      'path' => $path . '/templates',
+      'template' => 'identity_login_composite',
+    ],
+  ];
+}
+
+/**
+ * Alter specific webform.
+ */
+function webform_identity_login_form_webform_submission_test_identity_login_form_alter(
+  &$form,
+  FormStateInterface $form_state,
+  $form_id
+) {
+  if (isset($form['information'])) { //
+    unset($form['information']);
+  }
+}
+
+
+/**
+ * Implements hook_civicrm_tokens().
+ */
+function webform_identity_login_civicrm_tokens(&$tokens) {
+  // Déclarer dynamiquement un token par webform configuré.
+  try {
+    $webform_storage = \Drupal::entityTypeManager()->getStorage('webform');
+    $webforms = $webform_storage->loadMultiple();
+
+    foreach ($webforms as $webform) {
+      $elements = $webform->getElementsDecodedAndFlattened();
+
+      foreach ($elements as $key => $element) {
+  if (($element['#type'] ?? NULL) === 'identity_login_composite') {
+    \Drupal::logger('webform_identity_login')->debug(
+      'Element @key properties: @props',
+      ['@key' => $key, '@props' => print_r($element, TRUE)]
+    );
+  }
+}
+
+      foreach ($elements as $element) {
+        if (($element['#type'] ?? NULL) !== 'identity_login_composite') {
+          continue;
+        }
+        if (empty($element['#secret_key'])) {
+          continue;
+        }
+
+        $tokens['identity_login']['identity_login.url_' . $webform->id()]
+          = t('Identity Login URL - @label', ['@label' => $webform->label()]);
+
+        break;
+      }
+    }
+  }
+  catch (\Exception $e) {
+    // Silencieux si Drupal n'est pas encore bootstrappé.
+  }
+}
+
+/**
+ * Implements hook_civicrm_tokenValues().
+ */
+function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL, $tokens = [], $context = NULL) {
+  // Vérifier si un de nos tokens est demandé.
+  $our_tokens = $tokens['identity_login'] ?? [];
+  if (empty($our_tokens)) {
+    return;
+  }
+
+  try {
+    $webform_storage = \Drupal::entityTypeManager()->getStorage('webform');
+    $webforms = $webform_storage->loadMultiple();
+
+    // Construire la map webform_id => config.
+    $configs = [];
+    foreach ($webforms as $webform) {
+      $elements = $webform->getElementsDecodedAndFlattened();
+      foreach ($elements as $element) {
+        if (($element['#type'] ?? NULL) !== 'identity_login_composite') {
+          continue;
+        }
+        $secret_key = $element['#secret_key'] ?? '';
+        if (empty($secret_key)) {
+          continue;
+        }
+        $configs[$webform->id()] = [
+          'secret_key' => $secret_key,
+          'url' => \Drupal::request()->getSchemeAndHttpHost()
+            . $webform->toUrl('canonical')->toString(),
+        ];
+        break;
+      }
+    }
+
+    // Pour chaque contact, générer les valeurs des tokens.
+    foreach ($cids as $cid) {
+      foreach ($our_tokens as $token_name) {
+        if (!str_starts_with($token_name, 'url_')) {
+          continue;
+        }
+
+        $webform_id = substr($token_name, 4);
+        if (!isset($configs[$webform_id])) {
+          continue;
+        }
+
+        $secret_key = $configs[$webform_id]['secret_key'];
+        $url        = $configs[$webform_id]['url'];
+        $token      = HmacUtils::computeHmac($cid ?? 'Non trouve', $values[$cid]['first_name'] ?? '', $values[$cid]['last_name'] ?? '', $values[$cid]['email'] ?? '', $secret_key);
+
+        $values[$cid]['identity_login.' . $token_name] = $url . '?' . http_build_query([
+          'idtoken' => $token,
+        ]);
+      }
+    }
+  }
+  catch (\Exception $e) {
+    \Drupal::logger('webform_identity_login')->error(
+      'Erreur tokenValues : @msg', ['@msg' => $e->getMessage()]
+    );
+  }
+}
+

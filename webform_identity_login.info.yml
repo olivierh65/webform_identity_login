@@ -1,0 +1,7 @@
+name: Webform Identity Login
+type: module
+description: Provides a Webform composite element that validates identity and logs in user.
+core_version_requirement: ^10
+package: Custom
+dependencies:
+  - webform:webform

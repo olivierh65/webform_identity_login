@@ -1,0 +1,33 @@
+{#
+/**
+ * @file
+ * Template for the identity_login_composite webform element.
+ *
+ * Available variables:
+ * - children: rendered child elements
+ * - element: the original render array
+ */
+#}
+
+
+<div class="identity-login-composite">
+  <div class="row name-fields">
+    <div class="name first-name">{{ element['#fields'].first_name }}</div>
+    <div class="name last-name">{{ element['#fields'].last_name }}</div>
+  </div>
+  <div class="row contact-fields">
+    <div class="contact phone">{{ element['#fields'].phone }}</div>
+    <div class="contact email">{{ element['#fields'].email }}</div>
+  </div>
+  <div class="row address-fields">
+    <div class="address street">{{ element['#fields'].street }}</div>
+    <div class="address street2">{{ element['#fields'].street2 }}</div>
+    <div class="address postal-code">{{ element['#fields'].postal_code }}</div>
+    <div class="address city">{{ element['#fields'].city }}</div>
+  </div>
+  {{ element['#fields'].cid }}
+  {{ element['#fields'].hash }}
+    {{ element['#fields'].fid }}
+    {{ element['#fields'].idtoken }}
+
+</div>
