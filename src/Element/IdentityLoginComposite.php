@@ -25,16 +25,6 @@ class IdentityLoginComposite extends WebformCompositeBase {
    *
    */
   public static function preRenderIdentityLogin(array $element) {
-    $renderer = \Drupal::service('renderer');
-
-    $fields = ['first_name', 'last_name', 'phone', 'email', 'street', 'street2', 'postal_code', 'city', 'cid', 'hash', 'fid', 'idtoken'];
-
-    $element['#fields'] = [];
-    foreach ($fields as $field) {
-      if (isset($element[$field])) {
-        $element['#fields'][$field] = $renderer->render($element[$field]);
-      }
-    }
 
     $element['#attached']['library'][] = 'webform_identity_login/identity-login';
 

@@ -21,19 +21,6 @@ function webform_identity_login_theme($existing, $type, $theme, $path) {
   ];
 }
 
-/**
- * Alter specific webform.
- */
-function webform_identity_login_form_webform_submission_test_identity_login_form_alter(
-  &$form,
-  FormStateInterface $form_state,
-  $form_id
-) {
-  if (isset($form['information'])) { //
-    unset($form['information']);
-  }
-}
-
 
 /**
  * Implements hook_civicrm_tokens().
@@ -46,15 +33,6 @@ function webform_identity_login_civicrm_tokens(&$tokens) {
 
     foreach ($webforms as $webform) {
       $elements = $webform->getElementsDecodedAndFlattened();
-
-      foreach ($elements as $key => $element) {
-  if (($element['#type'] ?? NULL) === 'identity_login_composite') {
-    \Drupal::logger('webform_identity_login')->debug(
-      'Element @key properties: @props',
-      ['@key' => $key, '@props' => print_r($element, TRUE)]
-    );
-  }
-}
 
       foreach ($elements as $element) {
         if (($element['#type'] ?? NULL) !== 'identity_login_composite') {

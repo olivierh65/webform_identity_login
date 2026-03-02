@@ -4,6 +4,7 @@ namespace Drupal\webform_identity_login\Plugin\WebformElement;
 
 use Drupal\webform\Plugin\WebformElement\WebformCompositeBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\webform\WebformSubmissionInterface;
 
 /**
  * @WebformElement(
@@ -13,7 +14,7 @@ use Drupal\Core\Form\FormStateInterface;
  *   category = @Translation("Custom"),
  *   multiline = FALSE,
  *   composite = TRUE,
- *   states_wrapper = FALSE,
+ *   states_wrapper = TRUE,
  * )
  */
 class IdentityLoginComposite extends WebformCompositeBase {
@@ -38,9 +39,17 @@ class IdentityLoginComposite extends WebformCompositeBase {
       '#title' => $this->t('Secret key'),
       '#description' => $this->t('Clé secrète partagée avec CiviCRM pour signer le token.'),
       '#default_value' => $this->getElementProperty($form_state->getFormObject()->getElement(), 'secret_key'),
+      '#required' => TRUE,
     ];
 
     return $form;
+  }
+
+  /**
+   *
+   */
+  public function prepare(array &$element, ?WebformSubmissionInterface $webform_submission = NULL) {
+    parent::prepare($element, $webform_submission);
   }
 
   /**
@@ -51,21 +60,19 @@ class IdentityLoginComposite extends WebformCompositeBase {
 
     $request = \Drupal::request();
 
-    // Si ce n'est pas une requête GET initiale, on skip.
-    if (!$request->isMethod('GET')) {
-      return;
-    }
-
     $cid   = $request->query->get('cid');
     $token = $request->query->get('idtoken');
 
-    if (!$cid || !$token) {
+    if ((isset($element['#default_value']['cid'])) && (isset($element['#default_value']['idtoken']))) {
+      // Le cid est déjà pré-rempli, on skip pour ne pas écraser une valeur valide.
       return;
     }
 
     $secret_key = $element['#secret_key'] ?? '';
     if (empty($secret_key)) {
-      return;
+      \Drupal::logger('webform_identity_login')->warning(
+        'Secret key is not configured for cid @cid, element @key', ['@cid' => $cid, '@key' => $element['#webform_key']]
+      );
     }
 
     // Vérifier le HMAC avant de pré-remplir.
