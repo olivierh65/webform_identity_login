@@ -204,7 +204,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
       $last_submission = $storage->getLastSubmission($webform_submission->getWebform(), NULL, $user, ['in_draft' => NULL]);
     }
     // Recherche une soumission anonyme avec le meme email.
-    else {
+    elseif ($this->configuration['anonymous_submission'] ?? FALSE) {
       $logger->info('Searching anonymous submission with email @email', [
         '@email' => $email,
       ]);
@@ -312,6 +312,22 @@ class IdentityLoginHandler extends WebformHandlerBase {
 
       }
     }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['anonymous_submission'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Allow to retrieve anonymous submission'),
+      '#description' => $this->t('Allow to retrieve anonymous submission based on email match, if no authenticated submission found for the user.'),
+      '#default_value' => $this->configuration['anonymous_submission'] ?? FALSE,
+      '#return_value' => TRUE,
+    ];
+    return $form;
   }
 
 }
