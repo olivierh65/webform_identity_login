@@ -75,15 +75,27 @@ class IdentityLoginComposite extends WebformCompositeBase {
       );
     }
 
-    // Vérifier le HMAC avant de pré-remplir.
-    $expected = hash_hmac('sha256', (string) $cid, $secret_key);
-    if (!hash_equals($expected, $token)) {
-      \Drupal::logger('webform_identity_login')->warning(
-      'Token HMAC invalide pour cid @cid', ['@cid' => $cid]
+    if (!empty($cid) && !empty($token) && !empty($secret_key)) {
+      // Vérifier le HMAC avant de pré-remplir.
+      $expected = hash_hmac('sha256', (string) $cid, $secret_key);
+      if (!hash_equals($expected, $token)) {
+        \Drupal::logger('webform_identity_login')->warning(
+          'Invalid HMAC token for cid @cid', ['@cid' => $cid]
+        );
+        // Meme si le token est invalide, on ne bloque pas le pré-remplissage pour éviter de bloquer les utilisateurs
+        // en cas de mauvaise configuration. On log l'erreur et on continue.
+        // return;.
+      }
+    }
+    else {
+      // Si les paramètres ne sont pas tous présents, on log une info pour aider au debug.
+      \Drupal::logger('webform_identity_login')->info(
+        'Missing parameters for cid @cid: token is @token, secret_key is @secret_key', [
+          '@cid' => $cid,
+          '@token' => empty($token) ? 'empty' : 'present',
+          '@secret_key' => empty($secret_key) ? 'empty' : 'present',
+        ]
       );
-      // Meme si le token est invalide, on ne bloque pas le pré-remplissage pour éviter de bloquer les utilisateurs
-      // en cas de mauvaise configuration. On log l'erreur et on continue.
-      // return;.
     }
 
     // Récupérer les sous-champs définis dans le composite.
