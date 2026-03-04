@@ -18,6 +18,14 @@ function webform_identity_login_theme($existing, $type, $theme, $path) {
       'path' => $path . '/templates',
       'template' => 'identity_login_composite',
     ],
+    'webform_handler_identity_login_handler_summary' => [
+      'variables' => [
+        'settings' => NULL,
+        'handler' => [],
+      ],
+      'path' => $path . '/templates',
+      'template' => 'webform-handler-identity-login-handler-summary',
+    ],
   ];
 }
 

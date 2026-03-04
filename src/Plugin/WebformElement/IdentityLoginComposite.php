@@ -6,6 +6,8 @@ use Drupal\webform\Plugin\WebformElement\WebformCompositeBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\webform\WebformSubmissionInterface;
 
+use Drupal\webform_identity_login\Utils\HmacUtils;
+
 /**
  * @WebformElement(
  *   id = "identity_login_composite",
@@ -60,8 +62,17 @@ class IdentityLoginComposite extends WebformCompositeBase {
 
     $request = \Drupal::request();
 
-    $cid   = $request->query->get('cid');
-    $token = $request->query->get('idtoken');
+    $cid        = $request->query->get('cid');
+    $token      = $request->query->get('idtoken');
+    $first_name = $request->query->get('first_name');
+    $last_name  = $request->query->get('last_name');
+    $email      = $request->query->get('email');
+
+    // Sans paramètres d'identité dans l'URL, conserver les valeurs existantes.
+    if (empty($cid) && empty($token) && empty($first_name)
+      && empty($last_name) && empty($email)) {
+      return;
+    }
 
     if ((isset($element['#default_value']['cid'])) && (isset($element['#default_value']['idtoken']))) {
       // Le cid est déjà pré-rempli, on skip pour ne pas écraser une valeur valide.
@@ -77,8 +88,14 @@ class IdentityLoginComposite extends WebformCompositeBase {
 
     if (!empty($cid) && !empty($token) && !empty($secret_key)) {
       // Vérifier le HMAC avant de pré-remplir.
-      $expected = hash_hmac('sha256', (string) $cid, $secret_key);
+      $expected = HmacUtils::computeHmac($cid ?? 'Non trouve', $first_name ?? '', $last_name ?? '', $email ?? '', $secret_key);
       if (!hash_equals($expected, $token)) {
+        \Drupal::logger('webform_identity_login')->warning('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last', [
+          '@cid' => ($cid ?? 'Non trouve'),
+          '@email' => ($email ?? 'Non trouve'),
+          '@first' => ($first_name ?? 'Non trouve'),
+          '@last' => ($last_name ?? 'Non trouve'),
+        ]);
         \Drupal::logger('webform_identity_login')->warning(
           'Invalid HMAC token for cid @cid', ['@cid' => $cid]
         );

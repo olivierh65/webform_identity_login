@@ -27,24 +27,63 @@ use Civi\Api4\Contact;
 class IdentityLoginHandler extends WebformHandlerBase {
 
   /**
-   *
+   * {@inheritdoc}
+   */
+  public function defaultConfiguration() {
+    return parent::defaultConfiguration() + [
+      'anonymous_submission' => FALSE,
+      'debug' => FALSE,
+    ];
+  }
+
+  /**
+   * Returns whether debug traces are enabled.
+   */
+  protected function isDebugEnabled() {
+    return !empty($this->configuration['debug']);
+  }
+
+  /**
+   * Logs a debug trace when debug mode is enabled.
+   */
+  protected function logDebug($message, array $context = []) {
+    if ($this->isDebugEnabled()) {
+      \Drupal::logger('webform_identity_login')->debug($message, $context);
+    }
+  }
+
+  /**
+   * {@inheritdoc}
    */
   public function validateForm(array &$form, FormStateInterface $form_state, WebformSubmissionInterface $webform_submission) {
 
     $current_page = $webform_submission->getCurrentPage();
     $first_page = array_key_first($webform_submission->getWebform()->getPages());
 
-    $logger = \Drupal::logger('webform_identity_login');
-    $logger->info('validateForm called');
+    $this->logDebug('validateForm context - current_page: @current_page, first_page: @first_page, uid: @uid', [
+      '@current_page' => $current_page ?? 'NULL',
+      '@first_page' => $first_page ?? 'NULL',
+      '@uid' => \Drupal::currentUser()->id(),
+    ]);
 
     if ($current_page !== $first_page) {
+      $this->logDebug('Not on first page, skipping validation');
       return parent::validateForm($form, $form_state, $webform_submission);
     }
 
     $request = \Drupal::request();
+    $route_name = \Drupal::routeMatch()->getRouteName();
+
+    if (str_starts_with($route_name, 'entity.webform_submission')) {
+      // On est en admin edit.
+      $this->logDebug('In admin edit route @route, skipping validation', ['@route' => $route_name]);
+      return parent::validateForm($form, $form_state, $webform_submission);
+    }
+
     $token = $request->query->get('token');
     // Si requete avec token, on passe la main a webform.
     if ($token) {
+      $this->logDebug('Token found in request, skipping validation');
       return parent::validateForm($form, $form_state, $webform_submission);
     }
 
@@ -62,15 +101,16 @@ class IdentityLoginHandler extends WebformHandlerBase {
     }
 
     if (!$composite_element) {
-      $logger->warning('No identity_login_composite element found');
-      return;
+      $this->logDebug('No identity_login_composite element found in webform @webform', [
+        '@webform' => $webform_submission->getWebform()->id(),
+      ]);
     }
 
     $civicrm_id = $values['cid'] ?? NULL;
     $token      = $values['idtoken'] ?? NULL;
     $email      = $values['email'] ?? NULL;
 
-    $logger->info('Validation started - CiviCRM ID: @id, Email: @email', [
+    $this->logDebug('Validation started - CiviCRM ID: @id, Email: @email', [
       '@id'    => $civicrm_id,
       '@email' => $email,
     ]);
@@ -79,11 +119,15 @@ class IdentityLoginHandler extends WebformHandlerBase {
     $has_been_connected = FALSE;
 
     if (!$civicrm_id || !$token || !$email) {
-      $logger->warning('Missing cid, token or email - skipping validation');
+      $this->logDebug('Missing cid, token or email - skipping validation');
     }
 
+    $this->logDebug('Composite values received: @values', [
+      '@values' => json_encode($values),
+    ]);
+
     if (!\Drupal::currentUser()->isAuthenticated()) {
-      $logger->info('User not authenticated - proceeding with identity login validation');
+      $this->logDebug('User not authenticated - proceeding with identity login validation');
 
       // Récupérer le secret_key depuis l'élément decoded (pour avoir les props custom).
       $decoded_elements = $webform_submission->getWebform()->getElementsDecodedAndFlattened();
@@ -95,31 +139,36 @@ class IdentityLoginHandler extends WebformHandlerBase {
         }
       }
 
+      $this->logDebug('Secret key configured: @configured', [
+        '@configured' => empty($secret_key) ? 'NO' : 'YES',
+      ]);
       if (empty($secret_key)) {
-        $logger->error('No secret_key configured on identity_login_composite element');
+        $this->logDebug('No secret_key configured on identity_login_composite element');
       }
       // Secret key trouvé, on peut vérifier le token.
       else {
         // Vérifier le HMAC.
         $expected = HmacUtils::computeHmac($civicrm_id ?? 'Non trouve', $values['first_name'] ?? '', $values['last_name'] ?? '', $values['email'] ?? '', $secret_key);
         if (!hash_equals($expected, $token)) {
-          $logger->warning('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last', [
+          $this->logDebug('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last, token: @token, expected: @expected', [
             '@cid' => ($civicrm_id ?? 'Non trouve'),
             '@email' => ($values['email'] ?? 'Non trouve'),
             '@first' => ($values['first_name'] ?? 'Non trouve'),
             '@last' => ($values['last_name'] ?? 'Non trouve'),
+            '@token' => ($token ?? 'Non trouve'),
+            '@expected' => ($expected ?? 'Non trouve'),
           ]);
         }
         // HMAC valide, on peut continuer le processus de login.
         else {
-          $logger->info('HMAC verification successful for cid @cid, Email: @email, first_name: @first, last_name: @last', [
+          $this->logDebug('HMAC verification successful for cid @cid, Email: @email, first_name: @first, last_name: @last', [
             '@cid' => ($civicrm_id ?? 'Non trouve'),
             '@email' => ($values['email'] ?? 'Non trouve'),
             '@first' => ($values['first_name'] ?? 'Non trouve'),
             '@last' => ($values['last_name'] ?? 'Non trouve'),
           ]);
 
-          $logger->info('Initializing CiviCRM');
+          $this->logDebug('Initializing CiviCRM');
           \Drupal::service('civicrm')->initialize();
 
           $contacts = Contact::get(FALSE)
@@ -133,8 +182,13 @@ class IdentityLoginHandler extends WebformHandlerBase {
           )
             ->execute();
 
+          $this->logDebug('CiviCRM query executed for cid @cid, matches: @count', [
+            '@cid' => $civicrm_id,
+            '@count' => $contacts->count(),
+          ]);
+
           if ($contacts->count() === 0) {
-            $logger->error('Contact not found in CiviCRM - ID: @id, Email: @email', [
+            $this->logDebug('Contact not found in CiviCRM - ID: @id, Email: @email', [
               '@id'    => $civicrm_id,
               '@email' => $email,
             ]);
@@ -143,7 +197,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
           else {
             $contact = $contacts->first();
 
-            $logger->info('Contact found - ID: @id', ['@id' => $contact['id']]);
+            $this->logDebug('Contact found - ID: @id', ['@id' => $contact['id']]);
 
             // Plus besoin du hash natif CiviCRM, le HMAC suffit.
             $users = \Drupal::entityTypeManager()
@@ -151,13 +205,13 @@ class IdentityLoginHandler extends WebformHandlerBase {
               ->loadByProperties(['uid' => $contact['drupal'][0]['uf_id']]);
 
             if (!$user = reset($users)) {
-              $logger->error('No Drupal user found for UF ID: @uf_id', [
+              $this->logDebug('No Drupal user found for UF ID: @uf_id', [
                 '@uf_id' => $contact['drupal'][0]['uf_id'],
               ]);
             }
             // User trouvé, on peut logger.
             else {
-              $logger->info('User found - UID: @uid, User: @user', [
+              $this->logDebug('User found - UID: @uid, User: @user', [
                 '@uid'  => $user->id(),
                 '@user' => $user->getAccountName(),
               ]);
@@ -175,6 +229,9 @@ class IdentityLoginHandler extends WebformHandlerBase {
               $user_input = $form_state->getUserInput();
               $user_input['form_token'] = $new_token;
               $form_state->setUserInput($user_input);
+              $this->logDebug('CSRF form token regenerated after user login for form @form_id', [
+                '@form_id' => $form_id,
+              ]);
 
             }
           }
@@ -182,15 +239,15 @@ class IdentityLoginHandler extends WebformHandlerBase {
       }
     }
     else {
-      $logger->info('User already authenticated - skipping identity login validation');
+      $this->logDebug('User already authenticated - skipping identity login validation');
       $user_connected = TRUE;
     }
 
     if ($user_connected) {
-      $logger->info('User authenticated');
+      $this->logDebug('User authenticated');
     }
     else {
-      $logger->warning('User anonymous after validation');
+      $this->logDebug('User anonymous after validation');
 
     }
     if (!isset($user)) {
@@ -205,7 +262,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
     }
     // Recherche une soumission anonyme avec le meme email.
     elseif ($this->configuration['anonymous_submission'] ?? FALSE) {
-      $logger->info('Searching anonymous submission with email @email', [
+      $this->logDebug('Searching anonymous submission with email @email', [
         '@email' => $email,
       ]);
 
@@ -225,7 +282,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
       if (!empty($sids)) {
         $last_submission = $storage->load(reset($sids));
 
-        $logger->info('Anonymous submission @sid found and attached to user @uid', [
+        $this->logDebug('Anonymous submission @sid found and attached to user @uid', [
           '@sid' => $last_submission->id(),
           '@uid' => $user->id(),
         ]);
@@ -233,10 +290,13 @@ class IdentityLoginHandler extends WebformHandlerBase {
     }
     $user_submission = $webform_submission;
     if ($last_submission) {
-      $logger->info('Soumission existante trouvée: @sid', ['@sid' => $last_submission->id()]);
+      $this->logDebug('Soumission existante trouvée: @sid', ['@sid' => $last_submission->id()]);
       $user_submission = $last_submission;
       // Attacher la soumission existante au form state.
       $form_state->getFormObject()->setEntity($user_submission);
+    }
+    else {
+      $this->logDebug('Aucune soumission existante trouvée pour ce formulaire et cet utilisateur');
     }
     $user_submission->setData($user_submission->getData() + [
       'has_been_connected' => $has_been_connected,
@@ -260,9 +320,14 @@ class IdentityLoginHandler extends WebformHandlerBase {
     if ($next_page) {
       $form_state->set('current_page', $next_page);
       $user_submission->setCurrentPage($next_page);
+      $this->logDebug('Navigation updated from @current to @next for submission @sid', [
+        '@current' => $current_page ?? 'NULL',
+        '@next' => $next_page,
+        '@sid' => $user_submission->id(),
+      ]);
     }
 
-    $logger->debug('last_submission: sid=@s, page=@p, draft=@d, completed=@c', [
+    $this->logDebug('last_submission: sid=@s, page=@p, draft=@d, completed=@c', [
       '@s' => $user_submission->id(),
       '@p' => $user_submission->getCurrentPage(),
       '@d' => $user_submission->isDraft() ? 'YES' : 'NO',
@@ -272,6 +337,10 @@ class IdentityLoginHandler extends WebformHandlerBase {
     if ($has_been_connected) {
       $user_submission->setOwnerId($user->id());
       $user_submission->save();
+      $this->logDebug('Submission @sid ownership set to uid @uid and saved', [
+        '@sid' => $user_submission->id(),
+        '@uid' => $user->id(),
+      ]);
     }
 
     $form_state->setRebuild();
@@ -291,12 +360,17 @@ class IdentityLoginHandler extends WebformHandlerBase {
   }
 
   /**
-   *
+   * {@inheritdoc}
    */
   public function postSave(WebformSubmissionInterface $webform_submission, $update = TRUE) {
     parent::postSave($webform_submission, $update);
     $current_page = $webform_submission->getCurrentPage();
     $last_page = array_key_last($webform_submission->getWebform()->getPages());
+    $this->logDebug('postSave called for submission @sid (current_page=@current, last_page=@last)', [
+      '@sid' => $webform_submission->id(),
+      '@current' => $current_page ?? 'NULL',
+      '@last' => $last_page ?? 'NULL',
+    ]);
 
     if ($current_page === $last_page) {
       // Tu peux exécuter du code serveur si besoin, par ex. déconnexion.
@@ -319,6 +393,14 @@ class IdentityLoginHandler extends WebformHandlerBase {
    */
   public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
     $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['debug'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Debug'),
+      '#description' => $this->t('Enable additional debug traces for this handler.'),
+      '#default_value' => $this->configuration['debug'] ?? FALSE,
+      '#return_value' => TRUE,
+    ];
 
     $form['anonymous_submission'] = [
       '#type' => 'checkbox',

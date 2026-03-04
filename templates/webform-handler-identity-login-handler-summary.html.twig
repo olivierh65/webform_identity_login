@@ -1,0 +1,19 @@
+{#
+/**
+ * @file
+ * Summary for the Identity Login webform handler.
+ *
+ * Available variables:
+ * - settings: Handler configuration.
+ * - handler: Handler plugin instance.
+ */
+#}
+{% if settings.debug %}
+  <b class="color-warning">{{ 'Debug is enabled'|t }}</b><br />
+{% endif %}
+
+<b>{{ 'Anonymous submission lookup:'|t }}</b>
+{{ settings.anonymous_submission ? 'Enabled'|t : 'Disabled'|t }}<br />
+
+<b>{{ 'Handler:'|t }}</b> {{ handler.label }}<br />
+<b>{{ 'Plugin ID:'|t }}</b> {{ handler.pluginId }}
