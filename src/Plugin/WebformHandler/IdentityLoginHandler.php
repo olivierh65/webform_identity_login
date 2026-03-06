@@ -27,12 +27,34 @@ use Civi\Api4\Contact;
 class IdentityLoginHandler extends WebformHandlerBase {
 
   /**
+   * Whether the user has been connected during validation.
+   *
+   * @var bool
+   */
+  protected $hasBeenConnected = FALSE;
+
+  /**
+   * Whether the user is currently connected.
+   *
+   * @var bool
+   */
+  protected $userConnected = FALSE;
+
+  /**
+   * The ID of the originally connected user before switching.
+   *
+   * @var int|null
+   */
+  protected $connectedUserId = NULL;
+
+  /**
    * {@inheritdoc}
    */
   public function defaultConfiguration() {
     return parent::defaultConfiguration() + [
       'anonymous_submission' => FALSE,
       'debug' => FALSE,
+      'switch_user' => FALSE,
     ];
   }
 
@@ -115,111 +137,128 @@ class IdentityLoginHandler extends WebformHandlerBase {
       '@email' => $email,
     ]);
 
-    $user_connected = FALSE;
-    $has_been_connected = FALSE;
+    $this->userConnected = FALSE;
+    $this->hasBeenConnected = FALSE;
+    $this->connectedUserId = NULL;
 
     if (!$civicrm_id || !$token || !$email) {
-      $this->logDebug('Missing cid, token or email - skipping validation');
+      $this->logDebug('Missing cid, token or email');
     }
 
     $this->logDebug('Composite values received: @values', [
       '@values' => json_encode($values),
     ]);
 
-    if (!\Drupal::currentUser()->isAuthenticated()) {
-      $this->logDebug('User not authenticated - proceeding with identity login validation');
-
-      // Récupérer le secret_key depuis l'élément decoded (pour avoir les props custom).
-      $decoded_elements = $webform_submission->getWebform()->getElementsDecodedAndFlattened();
-      $secret_key = NULL;
-      foreach ($decoded_elements as $key => $element) {
-        if (($element['#type'] ?? NULL) === 'identity_login_composite') {
-          $secret_key = $element['#secret_key'] ?? NULL;
-          break;
-        }
+    // Récupérer le secret_key depuis l'élément decoded (pour avoir les props custom).
+    $decoded_elements = $webform_submission->getWebform()->getElementsDecodedAndFlattened();
+    $secret_key = NULL;
+    foreach ($decoded_elements as $key => $element) {
+      if (($element['#type'] ?? NULL) === 'identity_login_composite') {
+        $secret_key = $element['#secret_key'] ?? NULL;
+        break;
       }
+    }
 
-      $this->logDebug('Secret key configured: @configured', [
-        '@configured' => empty($secret_key) ? 'NO' : 'YES',
-      ]);
-      if (empty($secret_key)) {
-        $this->logDebug('No secret_key configured on identity_login_composite element');
+    $this->logDebug('Secret key configured: @configured', [
+      '@configured' => empty($secret_key) ? 'NO' : 'YES',
+    ]);
+    if (empty($secret_key)) {
+      $this->logDebug('No secret_key configured on identity_login_composite element');
+    }
+    // Secret key trouvé, on peut vérifier le token.
+    else {
+      // Vérifier le HMAC.
+      $expected = HmacUtils::computeHmac($civicrm_id ?? 'Non trouve', $values['first_name'] ?? '', $values['last_name'] ?? '', $values['email'] ?? '', $secret_key);
+      if (!hash_equals($expected, $token)) {
+        $this->logDebug('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last, token: @token, expected: @expected', [
+          '@cid' => ($civicrm_id ?? 'Non trouve'),
+          '@email' => ($values['email'] ?? 'Non trouve'),
+          '@first' => ($values['first_name'] ?? 'Non trouve'),
+          '@last' => ($values['last_name'] ?? 'Non trouve'),
+          '@token' => ($token ?? 'Non trouve'),
+          '@expected' => ($expected ?? 'Non trouve'),
+        ]);
       }
-      // Secret key trouvé, on peut vérifier le token.
+      // HMAC valide, on peut continuer le processus de login.
       else {
-        // Vérifier le HMAC.
-        $expected = HmacUtils::computeHmac($civicrm_id ?? 'Non trouve', $values['first_name'] ?? '', $values['last_name'] ?? '', $values['email'] ?? '', $secret_key);
-        if (!hash_equals($expected, $token)) {
-          $this->logDebug('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last, token: @token, expected: @expected', [
-            '@cid' => ($civicrm_id ?? 'Non trouve'),
-            '@email' => ($values['email'] ?? 'Non trouve'),
-            '@first' => ($values['first_name'] ?? 'Non trouve'),
-            '@last' => ($values['last_name'] ?? 'Non trouve'),
-            '@token' => ($token ?? 'Non trouve'),
-            '@expected' => ($expected ?? 'Non trouve'),
+        $this->logDebug('HMAC verification successful for cid @cid, Email: @email, first_name: @first, last_name: @last', [
+          '@cid' => ($civicrm_id ?? 'Non trouve'),
+          '@email' => ($values['email'] ?? 'Non trouve'),
+          '@first' => ($values['first_name'] ?? 'Non trouve'),
+          '@last' => ($values['last_name'] ?? 'Non trouve'),
+        ]);
+
+        $this->logDebug('Initializing CiviCRM');
+        \Drupal::service('civicrm')->initialize();
+
+        $contacts = Contact::get(FALSE)
+          ->addSelect('id', 'first_name', 'last_name', 'email_primary.email')
+          ->addWhere('id', '=', $civicrm_id)
+          ->addWhere('email_primary.email', '=', $email)
+          ->setLimit(1)
+          ->addChain('drupal', UFMatch::get(TRUE)
+            ->addSelect('uf_id', 'id', 'uf_name')
+            ->addWhere('contact_id', '=', '$id')
+        )
+          ->execute();
+
+        $this->logDebug('CiviCRM query executed for cid @cid, matches: @count', [
+          '@cid' => $civicrm_id,
+          '@count' => $contacts->count(),
+        ]);
+
+        if ($contacts->count() === 0) {
+          $this->logDebug('Contact not found in CiviCRM - ID: @id, Email: @email', [
+            '@id'    => $civicrm_id,
+            '@email' => $email,
           ]);
+
+          // Aucun contact trouvé, on ne peut pas logger l'utilisateur.
+          // On deconnecte l'utilisateur actuel pour éviter les problèmes de permissions sur les pages suivantes, qui pourraient causer des erreurs 403 ou des problèmes d'affichage.
+          if (\Drupal::currentUser()->isAuthenticated()) {
+            if ($this->configuration['switch_user'] ?? FALSE) {
+              $this->connectedUserId = \Drupal::currentUser()->id();
+              $this->userConnected = FALSE;
+              $this->hasBeenConnected = FALSE;
+            }
+            $this->logout();
+            $this->logDebug('Current user logged out due to failed identity login validation');
+          }
         }
-        // HMAC valide, on peut continuer le processus de login.
+        // Contact trouvé, on peut logger l'utilisateur.
         else {
-          $this->logDebug('HMAC verification successful for cid @cid, Email: @email, first_name: @first, last_name: @last', [
-            '@cid' => ($civicrm_id ?? 'Non trouve'),
-            '@email' => ($values['email'] ?? 'Non trouve'),
-            '@first' => ($values['first_name'] ?? 'Non trouve'),
-            '@last' => ($values['last_name'] ?? 'Non trouve'),
-          ]);
+          $contact = $contacts->first();
 
-          $this->logDebug('Initializing CiviCRM');
-          \Drupal::service('civicrm')->initialize();
+          $this->logDebug('Contact found - ID: @id', ['@id' => $contact['id']]);
 
-          $contacts = Contact::get(FALSE)
-            ->addSelect('id', 'first_name', 'last_name', 'email_primary.email')
-            ->addWhere('id', '=', $civicrm_id)
-            ->addWhere('email_primary.email', '=', $email)
-            ->setLimit(1)
-            ->addChain('drupal', UFMatch::get(TRUE)
-              ->addSelect('uf_id', 'id', 'uf_name')
-              ->addWhere('contact_id', '=', '$id')
-          )
-            ->execute();
-
-          $this->logDebug('CiviCRM query executed for cid @cid, matches: @count', [
-            '@cid' => $civicrm_id,
-            '@count' => $contacts->count(),
-          ]);
-
-          if ($contacts->count() === 0) {
-            $this->logDebug('Contact not found in CiviCRM - ID: @id, Email: @email', [
-              '@id'    => $civicrm_id,
-              '@email' => $email,
+          $user = $this->getUserbyId($contact['drupal'][0]['uf_id']);
+          if (!$user) {
+            $this->logDebug('No Drupal user found for UF ID: @uf_id', [
+              '@uf_id' => $contact['drupal'][0]['uf_id'],
             ]);
           }
-          // Contact trouvé, on peut logger l'utilisateur.
+          // User trouvé, on peut logger.
           else {
-            $contact = $contacts->first();
+            $this->logDebug('User found - UID: @uid, User: @user', [
+              '@uid'  => $user->id(),
+              '@user' => $user->getAccountName(),
+            ]);
 
-            $this->logDebug('Contact found - ID: @id', ['@id' => $contact['id']]);
-
-            // Plus besoin du hash natif CiviCRM, le HMAC suffit.
-            $users = \Drupal::entityTypeManager()
-              ->getStorage('user')
-              ->loadByProperties(['uid' => $contact['drupal'][0]['uf_id']]);
-
-            if (!$user = reset($users)) {
-              $this->logDebug('No Drupal user found for UF ID: @uf_id', [
-                '@uf_id' => $contact['drupal'][0]['uf_id'],
+            if ($user->id() === \Drupal::currentUser()->id()) {
+              $this->logDebug('User @uid is already authenticated, no login needed', [
+                '@uid' => $user->id(),
               ]);
+              $this->userConnected = TRUE;
+              $this->hasBeenConnected = FALSE;
             }
-            // User trouvé, on peut logger.
             else {
-              $this->logDebug('User found - UID: @uid, User: @user', [
-                '@uid'  => $user->id(),
-                '@user' => $user->getAccountName(),
-              ]);
-
+              if ($this->configuration['switch_user'] ?? FALSE) {
+                $this->connectedUserId = \Drupal::currentUser()->id();
+              }
               // Login.
               user_login_finalize($user);
-              $user_connected = TRUE;
-              $has_been_connected = TRUE;
+              $this->userConnected = TRUE;
+              $this->hasBeenConnected = TRUE;
               // Regénérer le token CSRF pour éviter les problèmes de token invalides après login.
               $form_id = $form_state->getCompleteForm()['#form_id'] ?? $form['#form_id'];
               // Calcul le token_value en le meme code que  FormBuilder::prepareForm(), pour que le token soit valide pour ce formulaire.
@@ -232,18 +271,13 @@ class IdentityLoginHandler extends WebformHandlerBase {
               $this->logDebug('CSRF form token regenerated after user login for form @form_id', [
                 '@form_id' => $form_id,
               ]);
-
             }
           }
         }
       }
     }
-    else {
-      $this->logDebug('User already authenticated - skipping identity login validation');
-      $user_connected = TRUE;
-    }
 
-    if ($user_connected) {
+    if ($this->userConnected) {
       $this->logDebug('User authenticated');
     }
     else {
@@ -257,7 +291,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
     // Vérifier s'il existe une soumission pour ce formulaire et cet utilisateur.
     $storage = \Drupal::entityTypeManager()->getStorage('webform_submission');
     $last_submission = NULL;
-    if ($user_connected) {
+    if ($this->userConnected) {
       $last_submission = $storage->getLastSubmission($webform_submission->getWebform(), NULL, $user, ['in_draft' => NULL]);
     }
     // Recherche une soumission anonyme avec le meme email.
@@ -298,9 +332,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
     else {
       $this->logDebug('Aucune soumission existante trouvée pour ce formulaire et cet utilisateur');
     }
-    $user_submission->setData($user_submission->getData() + [
-      'has_been_connected' => $has_been_connected,
-    ]);
+
     $pages = $user_submission->getWebform()->getPages();
     $page_keys = array_keys($pages);
     $current_page = $form_state->get('current_page') ?: $user_submission->getCurrentPage();
@@ -334,12 +366,22 @@ class IdentityLoginHandler extends WebformHandlerBase {
       '@c' => $user_submission->isCompleted() ? 'YES' : 'NO',
     ]);
 
-    if ($has_been_connected) {
+    if ($this->hasBeenConnected) {
       $user_submission->setOwnerId($user->id());
       $user_submission->save();
       $this->logDebug('Submission @sid ownership set to uid @uid and saved', [
         '@sid' => $user_submission->id(),
         '@uid' => $user->id(),
+      ]);
+    }
+    elseif ($this->connectedUserId && !$this->userConnected) {
+      // Si on a un utilisateur connecté avant validation, mais que la validation a échoué,
+      // on attribut la soumission a l'utilisateur anonyme.
+      $user_submission->setOwnerId($user->id());
+      $user_submission->save();
+      $this->logDebug('Submission @sid set to anonymous and saved', [
+        '@sid' => $user_submission->id(),
+        '@uid' => $this->connectedUserId,
       ]);
     }
 
@@ -375,15 +417,36 @@ class IdentityLoginHandler extends WebformHandlerBase {
     if ($current_page === $last_page) {
       // Tu peux exécuter du code serveur si besoin, par ex. déconnexion.
       $current_user = \Drupal::currentUser();
-      $has_been_connected = $webform_submission->getData()['has_been_connected'] ?? FALSE;
-      if ($current_user->isAuthenticated() && $has_been_connected) {
-        // Déconnexion Drupal.
-        user_logout();
 
-        // 2️⃣ Détruire totalement la session Symfony
-        $session = \Drupal::request()->getSession();
-        $session->invalidate();
+      if ($current_user->isAuthenticated() && $this->hasBeenConnected) {
+        // Traitement d'un formulaire soumis par un autre utilisateur.
+        $this->logDebug('User @uid was connected during submission, logging out after completion', [
+          '@uid' => $current_user->id(),
+        ]);
+        $this->logout();
+        if ($this->configuration['switch_user'] ?? FALSE) {
+          $this->logDebug('User switched during submission, original user @uid reconnexion', [
+            '@uid' => $this->connectedUserId,
+          ]);
+          if ($this->connectedUserId) {
+            user_login_finalize($this->getUserbyId($this->connectedUserId_id));
+          }
+          else {
+            $this->logDebug('No original user ID found for reconnection after submission completion');
+          }
+        }
+        else {
+          $this->logDebug('User logged out after submission completion (no switch_user)');
+        }
+        return;
+      }
 
+      if ($current_user->isAuthenticated() && !$this->hasBeenConnected) {
+        // Meme utilisateur.
+        $this->logDebug('User @uid is authenticated but was not connected during submission, no logout', [
+          '@uid' => $current_user->id(),
+        ]);
+        return;
       }
     }
   }
@@ -409,7 +472,38 @@ class IdentityLoginHandler extends WebformHandlerBase {
       '#default_value' => $this->configuration['anonymous_submission'] ?? FALSE,
       '#return_value' => TRUE,
     ];
+
+    $form['switch_user'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Switch user on submission'),
+      '#description' => $this->t('If checked, the handler will switch the current user to the user found via CiviCRM match, even if there is already an authenticated user. USE WITH CAUTION as it can have security implications.'),
+      '#default_value' => $this->configuration['switch_user'] ?? FALSE,
+      '#return_value' => TRUE,
+    ];
     return $form;
+  }
+
+  /**
+   *
+   */
+  private function getUserbyId($uid) {
+    $users = \Drupal::entityTypeManager()
+      ->getStorage('user')
+      ->loadByProperties(['uid' => $uid]);
+    $user = reset($users);
+
+    return $user ?? NULL;
+  }
+
+  /**
+   *
+   */
+  private function logout() {
+    user_logout();
+
+    // Détruire totalement la session Symfony.
+    $session = \Drupal::request()->getSession();
+    $session->invalidate();
   }
 
 }

@@ -126,3 +126,41 @@ function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL
   }
 }
 
+/**
+ * Implements hook_views_data().
+ */
+function webform_identity_login_views_data() {
+
+  $data['webform_submission']['webform_identity_token'] = [
+    'title' => t('Webform Identity Token'),
+    'help' => t('Computed identity token for this submission'),
+    'field' => [
+      'id' => 'webform_identity_token',
+      'click sortable' => FALSE,
+    ],
+    'real field' => 'sid',  // pointe vers une colonne qui existe réellement
+  ];
+
+  $data['webform_submission']['webform_identity_login_url'] = [
+    'title' => t('Webform Identity Login URL'),
+    'help' => t('URL with identity token to access the webform.'),
+    'field' => [
+      'id' => 'webform_identity_login_url',
+      'click sortable' => FALSE,
+    ],
+    'real field' => 'sid',
+  ];
+
+  // La clé views est la table "virtuelle" que Drupal Views utilise pour les champs globaux
+  $data['views']['identity_login_url_from_fields'] = [
+    'title' => t('Identity Login URL (from fields)'),
+    'help' => t('Computed identity login URL built from selected view fields.'),
+    'field' => [
+      'id' => 'identity_login_url_from_fields',
+      'click sortable' => FALSE,
+    ],
+  ];
+
+  return $data;
+}
+

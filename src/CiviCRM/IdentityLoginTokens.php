@@ -74,6 +74,7 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
     }
 
     // Générer le HMAC.
+    // TODO: utiliser la fonction definie dans Utils\HmacUtils.php
     $token = hash_hmac('sha256', (string) $contact_id, $secret_key);
 
     // Construire l'URL.
