@@ -160,7 +160,106 @@ function webform_identity_login_views_data() {
       'click sortable' => FALSE,
     ],
   ];
-
   return $data;
 }
 
+/**
+ * Implements hook_views_query_alter().
+ *
+ * Corrige les JOIN buggés générés par Webform pour les sous-champs composites.
+ * Le bug : Views génère AND property = 'last_name' AND property = ''
+ * ce qui rend la condition impossible (0 lignes → doublons).
+ */
+function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $view, \Drupal\views\Plugin\views\query\QueryPluginBase $query) {
+  if (!$query instanceof \Drupal\views\Plugin\views\query\Sql) {
+    return;
+  }
+
+  if (($view->storage->get('base_table') ?? '') !== 'webform_submission') {
+    return;
+  }
+
+  // Corriger les JOINs buggés (property = '').
+  try {
+    $reflection = new \ReflectionClass($query);
+    if (!$reflection->hasProperty('tableQueue')) {
+      return;
+    }
+    $prop = $reflection->getProperty('tableQueue');
+    $prop->setAccessible(TRUE);
+    $table_queue = $prop->getValue($query);
+  }
+  catch (\ReflectionException $e) {
+    return;
+  }
+
+  if (!is_array($table_queue) || empty($table_queue)) {
+    return;
+  }
+
+  $modified = FALSE;
+  foreach ($table_queue as $alias => &$table_info) {
+    if (empty($table_info['join'])) {
+      continue;
+    }
+    $join = $table_info['join'];
+    if (!isset($join->extra) || !is_array($join->extra)) {
+      continue;
+    }
+    $has_property_value = FALSE;
+    $has_property_empty = FALSE;
+    $empty_index = NULL;
+    foreach ($join->extra as $i => $extra) {
+      if (($extra['field'] ?? '') === 'property') {
+        if (($extra['value'] ?? '') === '') {
+          $has_property_empty = TRUE;
+          $empty_index = $i;
+        }
+        else {
+          $has_property_value = TRUE;
+        }
+      }
+    }
+    if ($has_property_value && $has_property_empty && $empty_index !== NULL) {
+      unset($join->extra[$empty_index]);
+      $join->extra = array_values($join->extra);
+      $modified = TRUE;
+    }
+  }
+
+  if ($modified) {
+    $prop->setValue($query, $table_queue);
+  }
+
+  // Remplacer la requête principale par une sous-requête qui ne garde
+  // que le MAX(sid) par email (dernière soumission par contact).
+  // On injecte une condition sur sid via une sous-requête.
+  // Récupérer les webform_ids depuis le filtre 'webform_id' (filtre bundle).
+  $webform_ids = [];
+  foreach ($view->filter ?? [] as $filter_id => $filter) {
+    if ($filter_id === 'webform_id' && isset($filter->value) && is_array($filter->value)) {
+      $webform_ids = array_keys($filter->value);
+      break;
+    }
+  }
+
+  if (empty($webform_ids)) {
+    return;
+  }
+
+  // Sous-requête : MAX(sid) par email = dernière soumission par contact.
+  $db = \Drupal::database();
+  $subquery = $db->select('webform_submission_data', 'wsd_email')
+    ->condition('wsd_email.webform_id', $webform_ids, 'IN')
+    ->condition('wsd_email.name', 'identite')
+    ->condition('wsd_email.property', 'email')
+    ->condition('wsd_email.delta', '0')
+    ->groupBy('wsd_email.value');
+  $subquery->addExpression('MAX(wsd_email.sid)', 'max_sid');
+
+  $max_sids = $subquery->execute()->fetchCol();
+
+  if (!empty($max_sids)) {
+    $query->addWhere(0, 'webform_submission.sid', $max_sids, 'IN');
+  }
+}
