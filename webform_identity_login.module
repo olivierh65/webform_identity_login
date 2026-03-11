@@ -163,6 +163,12 @@ function webform_identity_login_views_data() {
   return $data;
 }
 
+function webform_identity_login_views_plugins_sort_alter(array &$plugins) {
+  if (isset($plugins['webform_submission_field_sort'])) {
+    $plugins['webform_submission_field_sort']['class'] = \Drupal\webform_identity_login\Plugin\views\sort\WebformSubmissionFieldSortFixed::class;
+  }
+}
+
 /**
  * Implements hook_views_query_alter().
  *
@@ -179,7 +185,7 @@ function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $
     return;
   }
 
-  // Corriger les JOINs buggés (property = '').
+  // 1. Corriger les JOINs buggés des fields (property = 'x' AND property = '').
   try {
     $reflection = new \ReflectionClass($query);
     if (!$reflection->hasProperty('tableQueue')) {
@@ -192,6 +198,24 @@ function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $
   catch (\ReflectionException $e) {
     return;
   }
+
+  /* if ($reflection->hasProperty('fieldAliases')) {
+  $fa_prop = $reflection->getProperty('fieldAliases');
+  $fa_prop->setAccessible(TRUE);
+  $field_aliases = $fa_prop->getValue($query);
+  \Drupal::logger('webform_identity_login')->debug(
+    'fieldAliases: @fa', ['@fa' => print_r($field_aliases, TRUE)]
+  );
+}
+
+if ($reflection->hasProperty('orderby')) {
+  $ob_prop = $reflection->getProperty('orderby');
+  $ob_prop->setAccessible(TRUE);
+  $orderby = $ob_prop->getValue($query);
+  \Drupal::logger('webform_identity_login')->debug(
+    'orderby: @ob', ['@ob' => print_r($orderby, TRUE)]
+  );
+} */
 
   if (!is_array($table_queue) || empty($table_queue)) {
     return;
@@ -231,13 +255,42 @@ function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $
     $prop->setValue($query, $table_queue);
   }
 
-  // Remplacer la requête principale par une sous-requête qui ne garde
-  // que le MAX(sid) par email (dernière soumission par contact).
-  // On injecte une condition sur sid via une sous-requête.
-  // Récupérer les webform_ids depuis le filtre 'webform_id' (filtre bundle).
+  // Dans hook_views_query_alter, après la correction des JOINs.
+if ($reflection->hasProperty('orderby') && $reflection->hasProperty('fieldAliases')) {
+  $orderby_prop = $reflection->getProperty('orderby');
+  $orderby_prop->setAccessible(TRUE);
+  $orderby = $orderby_prop->getValue($query);
+
+  $fa_prop = $reflection->getProperty('fieldAliases');
+  $fa_prop->setAccessible(TRUE);
+  $field_aliases = $fa_prop->getValue($query);
+
+  // Collecter les aliases de sid des tables webform_submission_field_*.
+  $parasite_aliases = [];
+  foreach ($field_aliases as $table_alias => $fields) {
+    if (str_starts_with($table_alias, 'webform_submission_field_') && isset($fields['sid'])) {
+      $parasite_aliases[] = $fields['sid'];
+    }
+  }
+
+  if (!empty($parasite_aliases) && is_array($orderby)) {
+    foreach ($orderby as $key => $order) {
+      if (in_array($order['field'] ?? '', $parasite_aliases, TRUE)) {
+        unset($orderby[$key]);
+      }
+    }
+    $orderby_prop->setValue($query, array_values($orderby));
+  }
+}
+
+  // 2. Ne garder que la dernière soumission par contact (MAX sid GROUP BY email).
   $webform_ids = [];
   foreach ($view->filter ?? [] as $filter_id => $filter) {
-    if ($filter_id === 'webform_id' && isset($filter->value) && is_array($filter->value)) {
+    if (
+      ($filter_id === 'webform_id' || ($filter->field ?? '') === 'webform_id')
+      && isset($filter->value)
+      && is_array($filter->value)
+    ) {
       $webform_ids = array_keys($filter->value);
       break;
     }
@@ -247,7 +300,6 @@ function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $
     return;
   }
 
-  // Sous-requête : MAX(sid) par email = dernière soumission par contact.
   $db = \Drupal::database();
   $subquery = $db->select('webform_submission_data', 'wsd_email')
     ->condition('wsd_email.webform_id', $webform_ids, 'IN')
@@ -261,5 +313,46 @@ function webform_identity_login_views_query_alter(\Drupal\views\ViewExecutable $
 
   if (!empty($max_sids)) {
     $query->addWhere(0, 'webform_submission.sid', $max_sids, 'IN');
+  }
+}
+
+function webform_identity_login_views_pre_render(\Drupal\views\ViewExecutable $view) {
+  if (($view->storage->get('base_table') ?? '') !== 'webform_submission') {
+    return;
+  }
+
+  if (empty($view->result)) {
+    return;
+  }
+
+  // Trouver les colonnes de tri wsd_sort_fixed_* dans le premier résultat.
+  $sort_columns = [];
+  $first = (array) reset($view->result);
+  foreach (array_keys($first) as $col) {
+    if (str_starts_with($col, 'wsd_sort_fixed_')) {
+      $sort_columns[] = $col;
+    }
+  }
+
+  if (empty($sort_columns)) {
+    return;
+  }
+
+  // Trier $view->result selon les colonnes wsd_sort_fixed_* dans l'ordre trouvé.
+  usort($view->result, function ($a, $b) use ($sort_columns) {
+    foreach ($sort_columns as $col) {
+      $va = $a->$col ?? '';
+      $vb = $b->$col ?? '';
+      $cmp = strcasecmp($va, $vb);
+      if ($cmp !== 0) {
+        return $cmp;
+      }
+    }
+    return 0;
+  });
+
+  // Réindexer.
+  foreach ($view->result as $i => $row) {
+    $view->result[$i]->index = $i;
   }
 }
