@@ -368,7 +368,8 @@ class IdentityLoginHandler extends WebformHandlerBase {
 
     if ($this->hasBeenConnected) {
       $user_submission->setOwnerId($user->id());
-      $user_submission->save();
+      // $this->cleanSubmissionUri($user_submission);
+      // $user_submission->save();
       $this->logDebug('Submission @sid ownership set to uid @uid and saved', [
         '@sid' => $user_submission->id(),
         '@uid' => $user->id(),
@@ -378,7 +379,8 @@ class IdentityLoginHandler extends WebformHandlerBase {
       // Si on a un utilisateur connecté avant validation, mais que la validation a échoué,
       // on attribut la soumission a l'utilisateur anonyme.
       $user_submission->setOwnerId($user->id());
-      $user_submission->save();
+      // $this->cleanSubmissionUri($user_submission);
+      // $user_submission->save();
       $this->logDebug('Submission @sid set to anonymous and saved', [
         '@sid' => $user_submission->id(),
         '@uid' => $this->connectedUserId,
@@ -386,6 +388,21 @@ class IdentityLoginHandler extends WebformHandlerBase {
     }
 
     $form_state->setRebuild();
+  }
+
+  /**
+   * Nettoie l'URI de la soumission des paramètres AJAX avant sauvegarde.
+   */
+  protected function cleanSubmissionUri(WebformSubmissionInterface $submission): void {
+    $uri = $submission->get('uri')->value;
+    if ($uri) {
+      $uri = preg_replace('/[?&](ajax_form=1|_wrapper_format=(drupal_ajax|drupal_modal|drupal_dialog|html|ajax))/', '', $uri);
+      // Réparer ?& → ? si le premier param a été supprimé.
+      $uri = preg_replace('/\?&/', '?', $uri);
+      // Supprimer ? terminal.
+      $uri = preg_replace('/\?$/', '', $uri);
+      $submission->set('uri', $uri);
+    }
   }
 
   /**
