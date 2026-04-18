@@ -90,8 +90,10 @@ function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL
         }
         $configs[$webform->id()] = [
           'secret_key' => $secret_key,
-          'url' => \Drupal::request()->getSchemeAndHttpHost()
-            . $webform->toUrl('canonical')->toString(),
+          //'url' => \Drupal::request()->getSchemeAndHttpHost().$webform->toUrl('canonical')->toString(),
+          // URL relative pour éviter les problèmes de multi-environnement (dev/staging/prod).
+          // et surtout, dans le mailing de civicrm, l'editeur rajoute http:// devant les URL, ce qui casse tout si on met l'URL absolue.
+          'url' => $webform->toUrl('canonical', ['absolute' => FALSE])->toString(),
         ];
         break;
       }
