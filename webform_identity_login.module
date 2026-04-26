@@ -93,7 +93,10 @@ function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL
           //'url' => \Drupal::request()->getSchemeAndHttpHost().$webform->toUrl('canonical')->toString(),
           // URL sans scheme car dans le mailing de civicrm,
           // l'editeur rajoute http:// en debut de lien si il n'y a pas de scheme, ce qui casse tout si on met l'URL absolue.
-          'url' => \Drupal::request()->getHttpHost() . $webform->toUrl('canonical', ['absolute' => FALSE])->toString(),
+          // 'url' => $webform->toUrl('canonical', ['absolute' => FALSE])->toString(),
+          // retourne une url sans scheme, mais avec l'host
+          'url' => preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '',
+              $webform->toUrl('canonical', ['absolute' => TRUE])->toString())
         ];
         break;
       }
