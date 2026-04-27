@@ -2,6 +2,7 @@
 
 use Drupal\webform_identity_login\Utils\HmacUtils;
 use Drupal\Core\Form\FormStateInterface;
+use Symfony\Component\DependencyInjection\Definition;
 
 /**
  * @file
@@ -33,7 +34,7 @@ function webform_identity_login_theme($existing, $type, $theme, $path) {
 /**
  * Implements hook_civicrm_tokens().
  */
-function webform_identity_login_civicrm_tokens(&$tokens) {
+function ___webform_identity_login_civicrm_tokens(&$tokens) {
   // Déclarer dynamiquement un token par webform configuré.
   try {
     $webform_storage = \Drupal::entityTypeManager()->getStorage('webform');
@@ -65,13 +66,18 @@ function webform_identity_login_civicrm_tokens(&$tokens) {
 /**
  * Implements hook_civicrm_tokenValues().
  */
-function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL, $tokens = [], $context = NULL) {
+function __webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL, $tokens = [], $context = NULL) {
   // Vérifier si un de nos tokens est demandé.
   $our_tokens = $tokens['identity_login'] ?? [];
   if (empty($our_tokens)) {
     return;
   }
 
+  \Civi::log()->debug('Requested tokens: @tokens', ['@tokens' => $our_tokens]);
+  \Civi::log()->debug('Values: @values', ['@values' => $values]);
+  \Civi::log()->debug('CIDs: @cids', ['@cids' => $cids]);
+  \Civi::log()->debug('Context: @context', ['@context' => $context]);
+  \Civi::log()->debug('Job: @job', ['@job' => $job]);
   try {
     $webform_storage = \Drupal::entityTypeManager()->getStorage('webform');
     $webforms = $webform_storage->loadMultiple();
@@ -88,6 +94,7 @@ function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL
         if (empty($secret_key)) {
           continue;
         }
+        \Civi::log()->debug('Element: @id ', ['@id' => $element]);
         $configs[$webform->id()] = [
           'secret_key' => $secret_key,
           //'url' => \Drupal::request()->getSchemeAndHttpHost().$webform->toUrl('canonical')->toString(),
@@ -98,6 +105,7 @@ function webform_identity_login_civicrm_tokenValues(&$values, $cids, $job = NULL
           'url' => preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '',
               $webform->toUrl('canonical', ['absolute' => TRUE])->toString())
         ];
+        \Civi::log()->debug('Config for webform @id: @config', ['@id' => $webform->id(), '@config' => print_r($configs[$webform->id()], TRUE)]);
         break;
       }
     }
@@ -360,4 +368,18 @@ function webform_identity_login_views_pre_render(\Drupal\views\ViewExecutable $v
   foreach ($view->result as $i => $row) {
     $view->result[$i]->index = $i;
   }
+}
+
+function webform_identity_login_civicrm_container($container) {
+  $definition = new Definition(
+    \Drupal\webform_identity_login\CiviCRM\IdentityLoginTokens::class
+  );
+
+  $definition->addTag('kernel.event_subscriber');
+  $definition->addTag('civi.token_subscriber');
+
+  $container->setDefinition(
+    'webform_identity_login.identity_login_tokens',
+    $definition
+  );
 }

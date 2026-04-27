@@ -2,9 +2,13 @@
 
 namespace Drupal\webform_identity_login\CiviCRM;
 
+use Civi\Api4\UFMatch;
+use Civi\Api4\Contact;
+use Civi\Token\Event\TokenRegisterEvent;
 use Civi\Token\Event\TokenValueEvent;
 use Civi\Token\AbstractTokenSubscriber;
 use Civi\Token\TokenRow;
+use Drupal\webform_identity_login\Utils\HmacUtils;
 
 /**
  * Fournit le token {identity_login.url} pour les mailings CiviCRM.
@@ -30,11 +34,14 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
    * identity_login_composite avec une secret_key configurée.
    */
   public function getActiveTokens(TokenValueEvent $e): array {
-    $tokens = [];
+    $messageTokens = $e->getTokenProcessor()->getMessageTokens()[$this->entity] ?? [];
+
+    $available = [];
     foreach ($this->getWebformConfigs() as $webform_id => $config) {
-      $tokens[] = 'url_' . $webform_id;
+      $available[] = 'url_' . $webform_id;
     }
-    return $tokens;
+
+    return array_intersect($available, $messageTokens);
   }
 
   /**
@@ -42,6 +49,23 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
    */
   public function prefetch(TokenValueEvent $e): void {
     // Pas de prefetch nécessaire, les données viennent du contexte du contact.
+  }
+
+  /**
+   *
+   */
+  public function registerTokens(TokenRegisterEvent $e): void {
+    /*  if ($e->getEntity() !== $this->entity) {
+    return;
+    } */
+
+    foreach ($this->getWebformConfigs() as $webform_id => $config) {
+      $e->register([
+        'entity' => $this->entity,
+        'field' => 'url_' . $webform_id,
+        'label' => ts('Identity Login URL - %1', [1 => $webform_id]),
+      ]);
+    }
   }
 
   /**
@@ -73,9 +97,38 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
       return;
     }
 
-    // Générer le HMAC.
-    // TODO: utiliser la fonction definie dans Utils\HmacUtils.php
-    $token = hash_hmac('sha256', (string) $contact_id, $secret_key);
+    // Récupérer les données du contact via l'API CiviCRM.
+    try {
+      $result = UFMatch::get(FALSE)
+        ->addSelect('contact_id')
+        ->addWhere('uf_id', '=', $contact_id)
+        ->execute()
+        ->first();
+
+      $civi_contact_id = $result['contact_id'] ?? NULL;
+
+      $contact = Contact::get(FALSE)
+        ->addSelect('first_name', 'last_name', 'email_primary.email')
+        ->addWhere('id', '=', $civi_contact_id)
+        ->execute()
+        ->first();
+    }
+    catch (\Exception $e) {
+      \Civi::log()->error('IdentityLoginTokens: erreur récupération contact @cid : @msg', [
+        '@cid' => $contact_id,
+        '@msg' => $e->getMessage(),
+      ]);
+      $row->format('text/plain')->tokens('identity_login', $field, '');
+      return;
+    }
+
+    $token = HmacUtils::computeHmac(
+    $contact['id'] ?? '',
+    $contact['first_name'] ?? '',
+    $contact['last_name'] ?? '',
+    $contact['email_primary.email'] ?? '',
+    $secret_key
+    );
 
     // Construire l'URL.
     $url = $webform_url . '?' . http_build_query([
@@ -117,9 +170,12 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
             continue;
           }
 
-          // Générer l'URL absolue du webform.
-          $url = \Drupal::request()->getSchemeAndHttpHost()
-            . $webform->toUrl('canonical')->toString();
+          // Générer l'URL du webform, sans le scheme (http/https) pour éviter que l'éditeur de mail CiviCRM n'ajoute automatiquement "http://" devant, ce qui casserait le lien si le site est en https.
+          $url = preg_replace(
+          '#^[a-zA-Z][a-zA-Z0-9+.-]*://#',
+          '',
+          $webform->toUrl('canonical', ['absolute' => TRUE])->toString()
+          );
 
           $configs[$webform->id()] = [
             'secret_key' => $secret_key,
@@ -139,6 +195,19 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
     }
 
     return $configs;
+  }
+
+  /**
+   *
+   */
+  public function getAllTokens(): array {
+    $tokens = [];
+    foreach ($this->getWebformConfigs() as $webform_id => $config) {
+      $tokens['url_' . $webform_id] = ts('Identity Login URL - %1', [
+        1 => $webform_id,
+      ]);
+    }
+    return $tokens;
   }
 
 }

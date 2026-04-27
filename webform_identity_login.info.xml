@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<extension key="webform_identity_login" type="module">
+  <file>webform_identity_login</file>
+  <name>Webform Identity Login</name>
+</extension>

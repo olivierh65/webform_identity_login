@@ -2,5 +2,4 @@ services:
   webform_identity_login.identity_login_tokens:
     class: Drupal\webform_identity_login\CiviCRM\IdentityLoginTokens
     tags:
-      - { name: kernel.event_subscriber }
       - { name: civi.token_subscriber }
