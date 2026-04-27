@@ -99,9 +99,9 @@ class IdentityLoginComposite extends WebformCompositeBase {
         \Drupal::logger('webform_identity_login')->warning(
           'Invalid HMAC token for cid @cid', ['@cid' => $cid]
         );
-        // Meme si le token est invalide, on ne bloque pas le pré-remplissage pour éviter de bloquer les utilisateurs
-        // en cas de mauvaise configuration. On log l'erreur et on continue.
-        // return;.
+        // Token invalide, ne pas pré-remplir et ne pas log les autres paramètres pour éviter de divulguer des informations.
+        \Drupal::messenger()->addWarning(t('Invalid token. Please contact the site administrator if you believe this is an error.'));
+        return;
       }
     }
     else {
