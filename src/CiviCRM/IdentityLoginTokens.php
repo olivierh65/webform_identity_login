@@ -108,7 +108,7 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
       $civi_contact_id = $result['contact_id'] ?? NULL;
 
       $contact = Contact::get(FALSE)
-        ->addSelect('first_name', 'last_name', 'email_primary.email')
+        ->addSelect('first_name', 'last_name', 'email_primary.email', 'phone_primary.phone')
         ->addWhere('id', '=', $civi_contact_id)
         ->execute()
         ->first();
@@ -131,8 +131,14 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
     );
 
     // Construire l'URL.
+    // format : https://mcm65.famh.fr/form/pascuet-mai-2026-v2?idtoken=f40126d1d69c4b364fa4bb6e3e83101bbeb59119efd73884afa342237a81a7e0&cid=7689&first_name=Yohan&last_name=ARBERET&email=yohan.arberet%40sfr.fr&phone=06%2026%2068%2048%2067
     $url = $webform_url . '?' . http_build_query([
       'idtoken' => $token,
+      'cid' => $contact['id'] ?? '',
+      'first_name' => $contact['first_name'] ?? '',
+      'last_name' => $contact['last_name'] ?? '',
+      'email' => $contact['email_primary.email'] ?? '',
+      'phone' => $contact['phone_primary.phone'] ?? '',
     ]);
 
     $row->format('text/html')->tokens('identity_login', $field, $url);
