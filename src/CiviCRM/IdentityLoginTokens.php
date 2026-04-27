@@ -2,7 +2,6 @@
 
 namespace Drupal\webform_identity_login\CiviCRM;
 
-use Civi\Api4\UFMatch;
 use Civi\Api4\Contact;
 use Civi\Token\Event\TokenRegisterEvent;
 use Civi\Token\Event\TokenValueEvent;
@@ -99,19 +98,25 @@ class IdentityLoginTokens extends AbstractTokenSubscriber {
 
     // Récupérer les données du contact via l'API CiviCRM.
     try {
-      $result = UFMatch::get(FALSE)
-        ->addSelect('contact_id')
-        ->addWhere('uf_id', '=', $contact_id)
-        ->execute()
-        ->first();
+      if ($contact_id == 1) {
+        // Cas d'un en envoi de test a une adresse (pas une liste)
+        // visiblement le contact_id est celui de l'utilisateur admin (1) au lieu de celui du contact de test, ce qui génère une erreur car il n'existe pas de UFMatch pour ce contact.
+        // recherche le contact_id a partir de l'adresse mail.
+        $contact = Contact::get(FALSE)
+          ->addSelect('first_name', 'last_name', 'email_primary.email', 'phone_primary.phone')
+          ->addWhere('email_primary.email', '=', $row->context['mailingActionTarget']['email'] ?? '')
+          ->addWhere('id', '!=', 1)
+          ->execute()
+          ->first();
+      }
+      else {
 
-      $civi_contact_id = $result['contact_id'] ?? NULL;
-
-      $contact = Contact::get(FALSE)
-        ->addSelect('first_name', 'last_name', 'email_primary.email', 'phone_primary.phone')
-        ->addWhere('id', '=', $civi_contact_id)
-        ->execute()
-        ->first();
+        $contact = Contact::get(FALSE)
+          ->addSelect('first_name', 'last_name', 'email_primary.email', 'phone_primary.phone')
+          ->addWhere('id', '=', $contact_id)
+          ->execute()
+          ->first();
+      }
     }
     catch (\Exception $e) {
       \Civi::log()->error('IdentityLoginTokens: erreur récupération contact @cid : @msg', [
