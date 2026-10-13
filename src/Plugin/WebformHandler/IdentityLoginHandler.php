@@ -169,7 +169,7 @@ class IdentityLoginHandler extends WebformHandlerBase {
     else {
       // Vérifier le HMAC.
       $expected = HmacUtils::computeHmac($civicrm_id ?? 'Non trouve', $values['first_name'] ?? '', $values['last_name'] ?? '', $values['email'] ?? '', $secret_key);
-      if (!hash_equals($expected, $token)) {
+      if (!hash_equals($expected, $token ?? 'Non trouve')) {
         $this->logDebug('HMAC verification failed for cid @cid, Email: @email, first_name: @first, last_name: @last, token: @token, expected: @expected', [
           '@cid' => ($civicrm_id ?? 'Non trouve'),
           '@email' => ($values['email'] ?? 'Non trouve'),
